@@ -1,0 +1,726 @@
+var FPS = 30;
+var CANVAS_PADDING = 50;
+
+var NUM_BOIDS = 150;
+var RADIUS = 2;
+var SPEED = 100
+var OMEGA = 2 * Math.PI;
+var FRICTION = 100;
+var BOUNCE = 2;
+var FLEE = 3;
+
+var FLOCK_DIST = 25;
+var AVOID_DIST = 10;
+var WALL_DIST = 50;
+
+var T_LENGTH = 400;
+var T_SPEED = 1000;
+var T_WIDTH = 10;
+
+var B_IGNORE = false;
+
+var E_SPEED = .125;
+var E_WIDTH = 25;
+var E_DIST = 25;
+
+var win = 0;
+var loss = 0;
+var score = 0;
+var stop = true;
+
+var draw;
+var append;
+
+var count = 0;
+
+if (! ('console' in window)) {
+    console = {
+	log: function () {},
+	err: function () {}
+    }
+}
+
+var queue_key = null;
+var xmin, xmax, ymin, ymax;
+var xnorm = new vect (1, 0);
+var ynorm = new vect (0, 1);
+
+function Enemy (dir) {
+    var total = 2 * (xmax - xmin + ymax - ymin);
+    var x_ratio = (xmax - xmin) / total;
+    var y_ratio = (ymax - ymin) / total;
+    var raw_pos = 0;
+    this.pos = new vect (xmin, ymin);
+    this.dir = dir;
+    this.kill = function (pos) {
+	return (vect.dist (this.pos, pos) < E_DIST);
+    };
+    this.update = function (dt) {
+	raw_pos += (this.dir * dt * E_SPEED);
+	if (raw_pos > 1)
+	    raw_pos -= 1;
+	else if (raw_pos < 0)
+	    raw_pos += 1;
+	if (raw_pos < x_ratio) {
+	    var t = raw_pos / x_ratio;
+	    this.pos.x = xmin * (1 - t) + xmax * t;
+	    this.pos.y = ymin;
+	}
+	else if (raw_pos < x_ratio + y_ratio) {
+	    var t = (raw_pos - x_ratio) / y_ratio;
+	    this.pos.x = xmax;
+	    this.pos.y = ymin * (1 - t) + ymax * t;
+	}
+	else if (raw_pos < 2 * x_ratio + y_ratio) {
+	    var t = (raw_pos - x_ratio - y_ratio) / x_ratio;
+	    this.pos.x = xmax * (1 - t) + xmin * t;
+	    this.pos.y = ymax;
+	}	   
+	else {
+	    var t = (raw_pos - 2 * x_ratio - y_ratio) / y_ratio;
+	    this.pos.x = xmin;
+	    this.pos.y = ymax * (1 - t) + ymin * t;
+	}
+	var factor = Math.random () * FPS * 10;
+	if (factor < 1)
+	    this.dir *= -1;
+    };
+    this.draw = function (context) {
+	context.fillStyle ='#000000';
+	context.beginPath ();	
+	context.rect (this.pos.x - E_WIDTH, this.pos.y - E_WIDTH, 2 * E_WIDTH, 2 * E_WIDTH);
+	context.closePath ();
+	context.fill ();
+    };
+};
+
+var enemy;
+
+function Tongue (v0, dir, vertical) {
+    this.v0 = v0;
+    this.v1 = new vect (v0.x, v0.y);
+    this.dir = dir;
+    this.extended = false;
+    this.speed = T_SPEED;
+    this.vertical = vertical;
+    this.step = 0;
+    this.reset = function () {
+        this.step = 0;
+        this.v1 = this.v0.clone ();
+        this.extended = false;
+    };
+    this.in_range = function (pos, px, py) {
+	var minx = Math.min (this.v0.x, this.v1.x) - px;
+	var maxx = Math.max (this.v0.x, this.v1.x) + px;
+	var miny = Math.min (this.v0.y, this.v1.y) - py;
+	var maxy = Math.max (this.v0.y, this.v1.y) + py;
+	if ((pos.x >= minx) && (pos.x <= maxx)) {
+	    if ((pos.y >= miny) && (pos.y <= maxy))
+		return true;
+	}
+	return false;
+    };
+    this.eat = function (pos) {
+	if (this.step == 0)
+	    return false;
+	if (this.in_range (pos, T_WIDTH, T_WIDTH)) {
+	    score ++;
+	    return true;
+	}
+
+    };
+    this.update = function (dt) {
+	var vel = vect.scale (this.dir, dt * this.speed);
+	if (this.extended) {
+	    var d = vect.sub (this.v1, this.v0);
+	    if (d.length () <= T_LENGTH) {
+		this.v1.add (vel);
+		this.step ++;
+	    }
+	}
+	else {
+	    if (this.step > 0) {
+		this.step --;
+		this.v1.sub (vel);
+	    }
+	    //var d = vect.sub (this.v1, this.v0);
+	    /*if (this.vertical) {
+		if (this.v1.y > this.v0.y) {
+		    this.v1.sub (vel);
+		}
+	    }
+	    else {
+		if (this.v1.x > this.v0.x)
+		    this.v1.sub (vel);
+	    }*/
+	}
+    },
+    this.draw = function (context) {
+	if (this == tongue) {
+	    context.beginPath ();
+	    context.lineWidth = T_WIDTH;
+	    context.strokeStyle = 'red';
+	    context.moveTo (this.v0.x, this.v0.y);
+	    context.lineTo (this.v1.x, this.v1.y);
+	    context.closePath ();
+	    context.stroke ();
+	}
+
+	if (this == tongue)
+	    context.fillStyle = 'green';
+	else
+	    context.fillStyle = '#cccccc';
+	context.beginPath ();
+	context.arc (this.v0.x, this.v0.y, 25, 0, 2 * Math.PI, true);
+	context.closePath ();
+	context.fill ();
+    }
+};
+
+var tongue = null;
+var top_left_tongue, top_mid_tongue, top_right_tongue, bottom_left_tongue, bottom_right_tongue;
+
+(function () {
+    var elements = [];
+    
+    var flock = function (ob) {
+	var items = []
+	for (var i = 0; i < elements.length; i ++) {
+	    var other = elements[i];
+	    if (ob == other)
+		continue;
+	    //if ((Math.abs (ob.pos.x - other.pos.x) >= FLOCK_DIST) || (Math.abs (ob.pos.y - other.pos.y) >= FLOCK_DIST))
+	    //	continue;
+	    if (dist (ob.pos, other.pos) <= FLOCK_DIST)
+		items.push (other);
+	}
+	return items;
+    };
+
+    var detect_wall = function (ob) {
+	//var canvas = $ ('#canvas');
+	//var xmax = canvas.width ();
+	//var ymax = canvas.height ();
+	var result = null;
+	if ((ob.pos.x < xmin + WALL_DIST)) {
+	    if (!result)
+		result = new vect (0, 0);	    
+	    result.x = 1;
+	}
+	else if (ob.pos.x >= xmax - WALL_DIST) {
+	    if (!result)
+		result = new vect (0, 0);	    
+	    result.x  = -1;
+	}
+
+	if ((ob.pos.y < ymin + WALL_DIST)) {
+	    if (!result)
+		result = new vect (0, 0);	    
+	    result.y = 1;
+	}
+	else if (ob.pos.y >= ymax - WALL_DIST) {
+	    if (!result)
+		result = new vect (0, 0);	    
+	    result.y  = -1;
+	}
+	if (result) {
+	    result.normalize ();
+	}
+	return result;
+    };
+
+    var detect_crash = function (ob, subset) {
+	var result = crash_edge (ob);
+	if (result) {
+	    return result;
+	}
+	for (var i = 0; i < subset.length; i ++) {
+	    var other = subset[i];
+	    var dir = vect.sub (ob.pos, other.pos);
+	    var d = dir.length ();
+	    if (d < 2 * RADIUS) {
+		dir.normalize ();
+		if (dir.length () < .001) {
+		    console.log ("Bad");
+		    return ob.dir;
+		}
+		return dir;
+	    }
+	}
+	return null;
+    };
+
+    var crash_edge = function (ob) {
+	//var canvas = $ ('#canvas');
+	//var xmax = canvas.width ();
+	//var ymax = canvas.height ();
+	var result = null;
+	if (ob.pos.x <= xmin) {
+	    if (!result)
+		result = new vect (ob.dir.x, ob.dir.y);
+	    result.x = Math.abs (result.x);
+	    if (Math.abs (result.cross (ynorm)) < .1)
+	        result = new vect (1, 0);
+	};
+	if (ob.pos.x >= xmax) {
+	    if (!result)
+		result = new vect (ob.dir.x, ob.dir.y);
+	    result.x = - Math.abs (result.x);
+	    if (Math.abs (result.cross (ynorm)) < .1)
+	        result = new vect (-1, 0);
+	};
+	if (ob.pos.y <= ymin) {
+	    if (!result)
+		result = new vect (ob.dir.x, ob.dir.y);
+	    result.y = Math.abs (result.y);
+	    //console.log (result.cross (xnorm));
+	    if (Math.abs (result.cross (xnorm)) < .1) {
+	        //console.log ("Bounce back");
+	        result = new vect (0, 1);
+            }  
+	};
+	if (ob.pos.y >= ymax) {
+	    if (!result)
+		result = new vect (ob.dir.x, ob.dir.y);
+	    result.y = -Math.abs (result.y);
+	    if (Math.abs (result.cross (xnorm)) < .1)
+	        result = new vect (0, -1);
+	};
+
+	return result;
+    };
+
+    /*var in_range = function (pos, min, max) {
+	return (pos > min && pos < max);
+    };
+
+    var get_eaten = function (ob) {
+	if (in_range (ob.pos.y, tongue.v0.y - 5, tongue.v1.y + 5)) {
+	    if (Math.abs (ob.pos.x - tongue.v0.x) < 5)
+		return true;
+	}
+	return false;
+    };*/
+
+    var detect_tongue = function (ob) {
+	if (!tongue.in_range (ob.pos, 100, 100))
+	    return null;
+	if (tongue.vertical) {
+	    var xdist = ob.pos.x - tongue.v0.x;
+	    var dir = xdist / Math.abs (xdist);
+	    return new vect (dir, 0);
+	}
+	else {
+	    var ydist = ob.pos.y - tongue.v0.y;
+	    var dir = ydist / Math.abs (ydist);
+	    return new vect (0, dir);	    
+	}
+	/*if (!in_range (ob.pos.y, tongue.v0.y - 50, tongue.v1.y + 50))
+	    return;
+	var xline = tongue.v0.x;
+	var xdist = ob.pos.x - xline;
+	if (Math.abs (xdist) < 100) {
+	    var dir = xdist / Math.abs (xdist);
+	    var result = new vect (0, 0);
+	    result.x = dir;
+	    return result;
+	}
+	return null;*/
+    };
+
+    var avoid_others = function (ob, subset) {
+	var result = null;
+	for (var i = 0; i < subset.length; i ++) {
+	    var other = subset[i];
+	    var dir = vect.sub (ob.pos, other.pos);
+	    var d = dir.length ();
+	    if (d <= AVOID_DIST) {
+		if (!result)
+		    result = new vect (0, 0);
+		dir.normalize ();
+		result.add (dir);
+	    }
+	}
+	if (result) {
+	    result.normalize ();
+	}
+	return result;
+    };
+
+    var follow_others = function (ob, subset, dt) {
+	var result = new vect (ob.dir.x, ob.dir.y);
+	var avg = new vect (ob.pos.x, ob.pos.y);
+	var count = 1;
+	for (var i = 0; i < subset.length; i ++) {
+	    result.add (subset[i].dir);
+	    avg.add (subset[i].pos);
+	    count ++;
+	}
+	result.normalize ();
+	if (count > 0) {
+	    avg.scale (1 / count);
+	    avg.sub (ob.pos);
+	    avg.normalize ();
+	    //avg.scale (.1);
+	    avg.add (result);
+	    avg.normalize ();
+	    for (var i = 0; i < subset.length; i ++) {
+		var other = subset[i];
+		var step = vect.add (ob.pos, vect.scale (avg, ob.speed * dt));
+		if (dist (step, other.pos) < 2 * AVOID_DIST) {
+		    return result;
+		}
+	    }
+	    return avg;
+	}
+	return result;
+    };
+
+    draw = function () {
+	var canvas = $ ('#canvas');
+	var context = canvas.get (0).getContext ('2d');
+
+	context.clearRect (0, 0, canvas.width (), canvas.height ());
+	context.strokeStyle = '#000000';
+	context.lineWidth = 1;
+	context.beginPath ();
+	context.rect (xmin, ymin, xmax - xmin, ymax - ymin);
+	context.closePath ();
+	context.stroke ();
+
+	for (var i = 0; i < elements.length; i ++) {
+	    elements[i].draw (context);
+	}
+	top_left_tongue.draw (context);
+	top_mid_tongue.draw (context);
+	top_right_tongue.draw (context);
+	bottom_left_tongue.draw (context);
+	bottom_right_tongue.draw (context);
+	enemy.draw (context);
+    };
+
+    update = function (dt) {
+	if (tongue.step == 0 && queue_key) {
+	    eval_key (queue_key);
+	    queue_key = null;
+	}
+	if (enemy.kill (tongue.v0)) {
+	    stop = true;
+	    return;
+	}
+	$ ('#score').text (score);
+	enemy.update (dt);
+	tongue.update (dt);
+	for (var i = 0; i < elements.length; i ++) {
+	    elements[i].update (dt);
+	}
+	for (var i = 0; i < elements.length; i ++) {
+	    elements[i].step (dt);
+	}
+	var new_elements = [];
+	for (var i = 0; i < elements.length; i ++) {
+	    if (!elements[i].dead)
+		new_elements.push (elements[i]);
+	}
+	elements = new_elements;
+    };
+
+    clear = function () {
+        elements = [];
+    };
+
+    append = function (x, y) {
+	var theta = Math.random () * Math.PI * 2;
+	elements.push ({
+	    pos: new vect (x, y),
+	    dir: new vect (Math.cos (theta), Math.sin (theta)),
+            speed: SPEED,
+	    priority: 0,
+	    color: '#000000',
+	    dead: false,
+	    draw: function (context) {
+		context.fillStyle = this.color;
+		context.beginPath ();
+		context.arc (this.pos.x, this.pos.y, RADIUS, 0, Math.PI * 2, false);
+		context.closePath ();
+		context.fill ();
+
+		/*context.beginPath ();
+		context.moveTo (this.pos.x, this.pos.y);
+		context.lineTo (this.pos.x + 50 * this.dir.x, this.pos.y + 50 *  this.dir.y);
+		context.closePath ();
+		context.stroke ();*/
+	    },
+	    update: function (dt) {
+		if (tongue.eat (this.pos)) {
+		    console.log ("Got One");
+		    this.dead = true;
+		}
+		var subset = flock (this);
+		var crash = detect_crash (this, subset);
+		if (crash) {
+		    this.speed = BOUNCE * SPEED;
+		    this.color = '#ff0000';
+		    //this.dir = crash;
+		    //this.dir.rotateTo (crash, OMEGA * dt);
+		    this.dir = crash;
+		    return;
+		}
+		if (this.speed > 1.5 * SPEED) {
+		    if (B_IGNORE)
+			return;
+		}
+		else
+		    this.color = '#000000';
+		var flee = detect_tongue (this);
+		if (flee) {
+		    this.dir.rotateTo (flee, OMEGA * dt);
+		    this.speed = FLEE * SPEED;
+		    return;
+		}
+		var wall = detect_wall (this);
+		if (wall) {
+		    this.dir.rotateTo (wall, OMEGA * dt);
+		    return;
+		}
+		var avoid = avoid_others (this, subset);
+		if (avoid) {
+		    this.dir.rotateTo (avoid, OMEGA * dt);
+		    return;
+		}
+		var follow = follow_others (this, subset, dt);
+		if (follow) {
+		    this.dir.rotateTo (follow, OMEGA * dt);
+		    return;
+		}
+		/*var ddir = new vect (0, 0);
+		for (var i = 0; i < subset.length; i ++) {
+		    var other = subset[i];
+		    var d = dist (this.pos, other.pos);
+		    var v = vect.sub (this.pos, other.pos);
+		    v.normalize ();
+		    v.scale (repel (d) - attract (d));
+		    ddir.add (v);
+		}
+		ddir.normalize ();
+		if (subset.length > 0)
+		    this.dir = ddir;
+		this.next = vect.add (this.pos, vect.scale (this.dir, dt * this.speed));*/	    
+		/*if (this.lock > 0) {
+		    this.lock --;
+		    this.next = vect.add (this.pos, vect.scale (this.dir, dt * this.speed));
+		    return;
+		}
+		var subset = flock (this);
+		var new_dir;
+		if (subset.length > 1) {
+		    var apos = avg_pos (this, subset);
+		    var adir = avg_dir (this, subset);
+		    new_dir = vect.sub (apos, this.pos);
+		    new_dir.normalize ();
+		    new_dir.add (vect.scale (adir, 10));
+		    new_dir.normalize ();
+		}
+		else {
+		    new_dir = this.dir;
+		    adir = this.dir;
+		}
+		var speed = dt * this.speed;
+		var new_pos = vect.add (this.pos, vect.scale (new_dir, speed));
+		var new_pos2 = vect.add (this.pos, vect.scale (adir, speed));
+		if (check_radius (new_pos, subset, AVOID_DIST)) {
+		    this.next = new_pos;
+		    this.dir = vect.add (this.dir, new_dir);
+		    this.dir.normalize ()
+		}
+		else if (check_radius (new_pos2, subset, AVOID_DIST)) {
+		    this.next = new_pos2;
+		    this.dir = vect.add (this.dir, adir);
+		    this.dir.normalize ()
+		}
+		else {
+		    var ob = find_closest (this, subset);
+		    var dir = vect.sub (this.pos, ob.pos);
+		    dir.normalize ();
+		    this.dir = vect.add (this.dir, dir);
+		    this.dir.normalize ();
+		    this.next = vect.add (this.pos, vect.scale (dir, speed));
+		}*/
+		/*if (this.lock > 0) {
+		    this.lock --;
+		    //return;
+		}
+		var edge = detect_edge (this);
+	        if (edge) {
+		    this.dir = edge;
+		    return;
+		}
+                var avoid = avoid_others (this);
+		if (avoid) {
+		    this.dir = avoid;		
+		    return;
+		}
+		if (this.lock == 0)
+		    this.dir = follow_others (this);*/
+	    },
+	    step: function (dt) {
+		if (this.dir.length () < .001) {
+		    this.dir.x = 1;
+		    this.dir.y = 0;
+		}
+		if (this.speed > SPEED)
+		    this.speed -= FRICTION * dt;
+		else if (this.speed < SPEED)
+		    this.speed = SPEED;
+		this.pos.add (vect.scale (this.dir, dt * this.speed));
+	    }
+	});
+    };
+}) ();
+
+var a = 65;
+var s = 83;
+var d = 68;
+var w = 87;
+
+function tongue_map (current, na, ns, nd, nw) {
+    return {
+	tongue: current,
+	65: na,
+	83: ns,
+	68: nd,
+	87: nw,
+    };
+};
+
+var current = 1;
+var last = 1;
+var movements;
+
+function setup (auto) {
+    xmin = CANVAS_PADDING;
+    ymin = CANVAS_PADDING;
+    xmax = $('#canvas').width () - CANVAS_PADDING;
+    ymax = $('#canvas').height () - CANVAS_PADDING;
+    
+    clear ();
+
+    score = 0;
+    $ ('#score').text (0);
+
+    for (var i = 0; i < NUM_BOIDS; i ++) {
+	var x = (xmax - xmin) * Math.random () + xmin;
+	var y = (ymax - ymin) * Math.random () + ymin;
+	append (x, y);
+    }
+    if (tongue) {
+        tongue.reset ();
+    }
+    else {
+	var xmid31 = (xmax + xmin) / 6;
+	var xmid32 = 3 * (xmax + xmin) / 6;
+	var xmid33 = 5 * (xmax + xmin) / 6;
+	var xmid21 = 2 * (xmax + xmin) / 6;
+	var xmid22 = 4 * (xmax + xmin) / 6;
+	top_left_tongue = new Tongue (new vect (xmid31, ymin), new vect (0, 1), true);
+	top_mid_tongue = new Tongue (new vect (xmid32, ymin), new vect (0, 1), true);
+	top_right_tongue = new Tongue (new vect (xmid33, ymin), new vect (0, 1), true);
+
+	bottom_left_tongue = new Tongue (new vect (xmid21, ymax), new vect (0, -1), true);
+	bottom_right_tongue = new Tongue (new vect (xmid22, ymax), new vect (0, -1), true);
+
+	movements = {
+	    0: tongue_map (top_left_tongue, 3, 3, 1, 0),
+	    1: tongue_map (top_mid_tongue, 0, 5, 2, 1),
+	    2: tongue_map (top_right_tongue, 1, 4, 4, 2),
+	    3: tongue_map (bottom_left_tongue, 0, 3, 4, 1),
+	    4: tongue_map (bottom_right_tongue, 3, 4, 2, 1),
+	};
+    }
+    tongue = top_mid_tongue;
+
+    enemy = new Enemy (1);
+
+    stop = auto;
+    stop = false;
+};
+
+$(document).ready (function () {
+    $ ('#reset').click (function (event) {
+        setup (false);
+        return false;
+    });
+    $ (document).keyup (function (event) {
+        event.preventDefault ();
+	if (!stop)
+            eval_key (event.keyCode);
+    });
+
+    /*$ (document).keydown (function (event) {
+        if (event.keyCode == 32) {
+	    tongue.extended = !(tongue.extended);
+        }
+    });*/
+    console.log ("Starting");
+
+    /*$ ('#canvas').click (function (event) {
+	var x = event.pageX - this.offsetLeft;
+	var y = event.pageY - this.offsetTop;	
+	count ++;
+	console.log ("Clicked: (" + x + "," + y + ")", "Added " + count);
+	append (x, y);
+    });*/
+
+    var Hz = 1000 / FPS
+
+    setup (true);
+
+    setInterval (function () {
+	draw ();
+	if (!stop)
+	    update (Hz / 1000);
+    }, Hz);
+});
+
+function schedule_tongue (key) {
+    var next = movements[current][key];
+    if (next == current)
+	return;
+    if (tongue.step <= 0) { 
+	if (next == 5) {
+	    if (last == 3 || last == 4)
+		next = last;
+	    else
+		next = 3;
+	}
+	last = current;
+	current = next;
+	tongue = movements[current].tongue;
+    }
+    else {
+	tongue.extended = false;
+	queue_key = key;
+    }
+};
+
+/*function schedule_tongue (key, set_tongue) {
+    if (tongue == set_tongue) {
+	tongue.extended = !(tongue.extended);
+    }
+    else if (tongue.step <= 0) {
+	tongue = set_tongue;
+	//tongue.extended = true;
+    }
+    else {
+	tongue.extended = false;
+	queue_key = key;
+    }
+};*/
+
+function eval_key (key) {
+    if ((key == a) || (key == s) || (key == w) || (key == d))
+	schedule_tongue (key);
+    else if (key == 32) {
+	tongue.extended = !(tongue.extended);
+    }
+};

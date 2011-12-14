@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Flocking</title>
+    <script type="text/javascript" src="jquery-1.6.4.min.js"></script>
+    <script type="text/javascript" src="vect.js"></script>
+    <script type="text/javascript" src="point.js"></script>
+    <script type="text/javascript" src="flock.js"></script>
+  </head>
+  <body>
+    <canvas id="canvas" style="float: left;" width="1100" height="600">
+      This browser does not support the &lt;canvas&gt; element
+    </canvas>
+    <div style="margin-left: 1125px;">
+      <button id="reset">Replay</button>
+      <p style="font-size: 24px; font-family: sans-serif">
+	<b>Score:</b> <span id="score">0</span><br />	
+	<b>Time:</b> <span id="time">0</span><br /><br />	
+	<b>Wins:</b> <span id="win">0</span><br />
+	<b>Losses:</b> <span id="loss">0</span>
+      </p>
+    </div>
+
+      <div style="padding-top: 25px; clear: both; font-size: 24px; font-family: sans-serif; width: 1100px">
+	<p style="text-align: center;">
+          You are a noble toad by a small pond trying to grab some bugs for dinner to keep your body and soul together. Use your power wisely, and beware of the sneaky slithering snakes!! <br /><br />
+	</p>
+        
+        <b>Goal:</b> Capture 50 flies ASAP. <br /><br />
+        
+        <b>Controls:</b> <br />
+        WASD - move to 1 of the 5 fishing piers</br>
+	
+        J - stick out thy tongue<br />
+        J - roll back thy weapon<br /><br />
+        
+        <span style="color: red; font-weight: bold;">Warning:</span> You can't move with your tongue out!
+      </div>
+      
+    </div>
+  </body>
+</html>

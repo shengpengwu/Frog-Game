@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Flocking</title>
+    <script type="text/javascript" src="jquery-1.6.4.min.js"></script>
+    <script type="text/javascript" src="vect.js"></script>
+    <script type="text/javascript" src="point.js"></script>
+    <script type="text/javascript" src="flock.js"></script>
+  </head>
+  <body>
+    <canvas id="canvas" style="float: left;" width="1100" height="600">
+      This browser does not support the &lt;canvas&gt; element
+    </canvas>
+    <div>
+      <button id="reset">Replay</button>
+      <p>
+	Score: <span id="score">0</span><br />	
+	Win: <span id="win">0</span><br />
+	Loss: <span id="loss">0</span>
+      </p>
+      
+    </div>
+  </body>
+</html>
